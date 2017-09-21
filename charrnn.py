@@ -6,23 +6,24 @@ import os.path
 #c-rnn-gan
 #char-rnn 을 gan형식으로 제작할 것. dur fre vel
 
-lstm_dim = 4
+lstm_dim = 350
+song_feature = 4
 start_num = 0
 batch_size = 50
 max_song_size = 400
 EPOCH = 200
-isAdam = False
-AdamLearningrate = 0.001
-GDLearningrate = 0.05
+isAdam = True
+AdamLearningrate = 0.1
+GDLearningrate = 0.1
 print_batch = 1
 
+save_batch = 50
+
+global weight_g, bias_g
 
 #final multiply in G
-weight_g = tf.get_variable("weight_g", shape= [lstm_dim],dtype= tf.float32, initializer=tf.truncated_normal_initializer)
-bias_g = tf.get_variable("bias_g", shape = [lstm_dim],dtype = tf.float32, initializer= tf.constant_initializer([0.1]*lstm_dim))
-song_num = song_var = {'train':0, 'validation': 0, 'test': 0}
-
-
+song_num = {'train': 0, 'validation': 0, 'test': 0}
+song_var = {'train': 0, 'validation': 0, 'test': 0}
 
 def init_batch():
     song_num['train'] = len(os.listdir('./train'))
@@ -50,62 +51,76 @@ def get_batch(what='train', batchsize = 50):
     return out_batch
 
 
+def linear(inp, out_dim):
+    from_dim = int(inp.shape[1])
+    print(from_dim)
+    lin_w = tf.get_variable('lin_w', [from_dim,out_dim], dtype = tf.float32, initializer = tf.truncated_normal_initializer)
+    lin_b = tf.get_variable('lin_b', [out_dim], dtype = tf.float32, initializer = tf.truncated_normal_initializer)
+    return tf.matmul(inp, lin_w)+lin_b
+
+
 def lstmcell(outdim_size):
-    return tf.contrib.rnn.BasicLSTMCell(outdim_size)
+    return tf.contrib.rnn.BasicLSTMCell(lstm_dim)
 
-
-def out_sigmoid(outdim_size):
-    return tf.contrib.rnn.BasicLSTMCell(outdim_size, activation = tf.sigmoid)
-
-
-cell_list_fw = [lstmcell(lstm_dim) for _ in range(2)]
-cell_list_fw.append(out_sigmoid(lstm_dim))
-cell_list_bw = [lstmcell(lstm_dim) for _ in range(2)]
-cell_list_bw.append(out_sigmoid(lstm_dim))
+cell_list_fw = [lstmcell(lstm_dim) for _ in range(3)]
+cell_list_bw = [lstmcell(lstm_dim) for _ in range(3)]
 
 
 def discriminator(x_input, x_size):
     # Batch Normal
-    x_input = tf.contrib.layers.batch_norm(x_input)
+    #x_input = tf.contrib.layers.batch_norm(x_input)
     lstm_fw = tf.contrib.rnn.MultiRNNCell(cell_list_fw)
     lstm_bw = tf.contrib.rnn.MultiRNNCell(cell_list_bw)
     output, _ = tf.nn.bidirectional_dynamic_rnn(lstm_fw,lstm_bw, x_input, x_size, dtype= tf.float32)
-    funcout = (output[0]+output[1])/2
-    return funcout
+    return output[0], output[1]
 
 
 def generator(z_prior, z_size):
     lstm = tf.contrib.rnn.MultiRNNCell([lstmcell(lstm_dim) for _ in range(3)])
     output, _ = tf.nn.dynamic_rnn(lstm, z_prior, dtype= tf.float32, sequence_length = z_size)
-
-    output = output*weight_g + bias_g
     return output
 
 
 def main():
+    global weight_g, bias_g
     init_batch()
-    z_in = tf.placeholder(tf.float32, shape = [None,None,lstm_dim])
-    z_size = tf.placeholder(tf.int32, shape= [None])
+    #z_in = tf.placeholder(tf.float32, shape = [batch_size,max_song_size,lstm_dim])
+    #z_size = tf.placeholder(tf.int32, shape= [None])
 
-    x_in = tf.placeholder(tf.float32, shape = [None, None, lstm_dim])
-    x_size = tf.placeholder(tf.int32, shape = [None])
+    z_in = tf.random_normal([batch_size, max_song_size, lstm_dim])
+    z_size = tf.constant(max_song_size, dtype= tf.int32, shape=[batch_size])
+    x_in = tf.placeholder(tf.float32, shape = [batch_size, max_song_size, song_feature])
+    x_size = tf.placeholder(tf.int32, shape = [batch_size])
     with tf.variable_scope("Generator") as scope:
         gen = generator(z_in, z_size)
+        gen = tf.reshape(gen,[-1, lstm_dim])
+        gen = linear(gen, song_feature)
+        gen_res = tf.reshape(gen, [-1, max_song_size, song_feature])
         generator_variables = [v for v in tf.global_variables()
                           if v.name.startswith(scope.name)]
 
     with tf.variable_scope("discriminator") as scope2:
-        dis_gen = discriminator(gen, z_size)
-        dis_real = discriminator(x_in, x_size)
+        gen_converted = linear(gen, lstm_dim)
+        print(gen_converted.shape)
+        gen_converted = tf.reshape(gen_converted,[-1, max_song_size, lstm_dim])
+        dis_gen_fw, dis_gen_bw = discriminator(gen_converted, z_size)
+        x_in_cv = tf.reshape(x_in, [-1, song_feature])
+        scope2.reuse_variables()
+        x_in_cv = linear(x_in_cv, lstm_dim)
+        print(x_in_cv)
+        x_in_cv = tf.reshape(x_in_cv, [-1,max_song_size, lstm_dim])
+        dis_real_fw, dis_real_bw = discriminator(x_in_cv, x_size)
         dis_variables = [v for v in tf.global_variables()
                                if v.name.startswith(scope2.name)]
 
     print('genvars: ', generator_variables)
     print('disvars: ', dis_variables)
     # Generator Feature Matching Loss
-    g_fm_loss = tf.reduce_sum(tf.squared_difference(dis_real, dis_gen))
-    d_loss = tf.reduce_mean(-tf.log(dis_real)-tf.log(1.0-dis_gen))
-
+    g_fm_loss = tf.reduce_sum(tf.squared_difference(dis_real_fw, dis_gen_fw)) + \
+                tf.reduce_sum(tf.squared_difference(dis_real_bw, dis_gen_bw))
+    dis_calc_in_loss_real = (dis_real_fw+dis_real_bw)/2
+    dis_calc_in_loss_gen = (dis_gen_fw+dis_gen_bw)/2
+    d_loss = tf.reduce_mean(-tf.log(tf.clip_by_value(dis_calc_in_loss_real,1e-4,1))-tf.log(tf.clip_by_value(1.0 - dis_calc_in_loss_gen,1e-4,1)))
     if isAdam:
         trainG = tf.train.AdamOptimizer(AdamLearningrate).minimize(g_fm_loss, var_list = generator_variables)
         trainD = tf.train.AdamOptimizer(AdamLearningrate).minimize(d_loss, var_list = dis_variables)
@@ -113,12 +128,18 @@ def main():
         trainG = tf.train.GradientDescentOptimizer(GDLearningrate).minimize(g_fm_loss, var_list = generator_variables)
         trainD = tf.train.GradientDescentOptimizer(GDLearningrate).minimize(d_loss, var_list = dis_variables)
 
+    saver = tf.train.Saver()
     with tf.Session() as sess:
-        sess.run(tf.global_variables_initializer())
+        cnt_step = 0
+        saved_loc = tf.train.latest_checkpoint()
+        if saved_loc is None:
+            sess.run(tf.global_variables_initializer())
+        else:
+            saver.restore(sess, saved_loc)
         for epoch in range(EPOCH):
             cnt_batch = 0
             while True:
-                song_data = np.zeros([batch_size, max_song_size, lstm_dim], dtype=np.uint32)
+                song_data = np.zeros([batch_size, max_song_size, song_feature], dtype=np.uint32)
                 song_getsoo = []
                 read_batch = get_batch()
                 for i, newbat in enumerate(read_batch):
@@ -129,16 +150,18 @@ def main():
                     song_getsoo.append(tmp_max)
                 '''z_input = tf.random_uniform(shape = [batch_size, max_song_size, lstm_dim], minval = 0.0, maxval = 1.0,
                                             dtype=tf.float32)'''
-                z_input = np.random.normal(size=[batch_size,max_song_size,lstm_dim])
-                z_input_size = [max_song_size] * batch_size
-                train_dict = {x_in: song_data, x_size: song_getsoo, z_in: z_input, z_size: z_input_size}
-                train_g_loss, train_d_loss, _, _ = sess.run([g_fm_loss, d_loss, trainG, trainD], feed_dict=train_dict)
-                if cnt_batch % print_batch == 0:
-                    print('epoch: ', epoch, ' batch_num: ', cnt_batch, ' G loss: ', train_g_loss,' D loss: ', train_d_loss)
-                cnt_batch+=1
+                train_dict = {x_in: song_data, x_size: song_getsoo}
+                train_g_loss, train_d_loss, _, _, generated = sess.run([g_fm_loss, d_loss, trainG, trainD, gen], feed_dict=train_dict)
+                print('Generated', generated[0:10])
+                if cnt_step % print_batch == 0:
+                    print('epoch: ', epoch, ' batch_num: ', cnt_batch, ' cnt_step_num: ', cnt_step ,' G loss: ', train_g_loss,' D loss: ', train_d_loss)
+                cnt_batch += 1
+                print(song_var['train'], ' ', song_num['train'])
                 if song_var['train'] + batch_size > song_num['train']:
                     break
-
+            if cnt_step % save_batch == 0:
+                saver.save(sess, './saved_model/model.ckpt', global_step = cnt_step)
+            cnt_step+=1
 
 
 if __name__ == '__main__':

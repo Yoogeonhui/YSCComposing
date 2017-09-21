@@ -16,14 +16,6 @@ song_data={'training':[], 'validation':[], 'test':[]}
 tempos=[]
 
 NUM_FEATURES_PER_TONE = 3
-def tone_to_freq(tone):
-    """
-      returns the frequency of a tone.
-      formulas from
-        * https://en.wikipedia.org/wiki/MIDI_Tuning_Standard
-        * https://en.wikipedia.org/wiki/Cent_(music)
-    """
-    return math.pow(2, ((float(tone)-69.0)/12.0)) * 440.0
 
 def get_rel_time(time, tmp):
     return (time-tempos[tmp]['time'])/tempos[tmp]['new_tick'] + tempos[tmp]['kara']
