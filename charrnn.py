@@ -132,7 +132,7 @@ def main():
     # Generator Feature Matching Loss
 
     g_fm_loss = tf.reduce_sum(tf.squared_difference(dis_calc_in_loss_real, dis_calc_in_loss_gen))
-    d_loss = tf.reduce_mean(-tf.log(tf.clip_by_value(dis_res_real,1e-4,1))-tf.log(tf.clip_by_value(1.0 - dis_res_gen,1e-4,1)))
+    d_loss = tf.reduce_mean(-tf.log(dis_res_real)-tf.log(1.0 - dis_res_gen))
     if isAdam:
         trainG = tf.train.AdamOptimizer(AdamLearningrate).minimize(g_fm_loss, var_list = generator_variables)
         trainD = tf.train.AdamOptimizer(AdamLearningrate).minimize(d_loss, var_list = dis_variables)
@@ -153,8 +153,8 @@ def main():
         else:
             saver.restore(sess, saved_loc)
             cnt_step = save_cnt.eval(sess)
-            EPOCH_start = (50 * cnt_step) // song_num['train']
-            song_var['train'] = (50 * cnt_step) % song_num['train']
+            EPOCH_start = (batch_size * cnt_step) // song_num['train']
+            song_var['train'] = (batch_size * cnt_step) % song_num['train']
             print('Saved Session Found step: ', cnt_step)
         for epoch in range(EPOCH_start, EPOCH):
             while True:
@@ -172,8 +172,8 @@ def main():
                 train_dict = {x_in: song_data, x_size: song_getsoo}
                 train_g_loss, train_d_loss, _, _, generated, dis_res_see_gen, dis_res_see_real = sess.run([g_fm_loss, d_loss, trainD, trainG, gen_res, dis_res_gen, dis_res_real],
                                                                        feed_dict=train_dict)
-                print('dis res real', dis_res_real)
-                print('dis res gen', dis_res_gen)
+                print('dis res real', dis_res_see_real)
+                print('dis res gen', dis_res_see_gen)
                 print('Generated', generated[0:10])
                 if cnt_step % print_batch == 0:
                     print('epoch: ', epoch, ' cnt_step_num: ', cnt_step, ' G loss: ', train_g_loss,' D loss: ', train_d_loss)
