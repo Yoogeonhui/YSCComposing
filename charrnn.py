@@ -11,15 +11,13 @@ song_feature = 4
 start_num = 0
 batch_size = 50
 max_song_size = 400
+global EPOCH
 EPOCH = 200
 isAdam = True
 AdamLearningrate = 0.1
 GDLearningrate = 0.1
 print_batch = 1
-
 save_batch = 50
-
-global weight_g, bias_g
 
 #final multiply in G
 song_num = {'train': 0, 'validation': 0, 'test': 0}
@@ -82,11 +80,11 @@ def generator(z_prior, z_size):
 
 
 def main():
-    global weight_g, bias_g
+    global EPOCH
     init_batch()
     #z_in = tf.placeholder(tf.float32, shape = [batch_size,max_song_size,lstm_dim])
     #z_size = tf.placeholder(tf.int32, shape= [None])
-
+    save_cnt = tf.Variable(0, dtype=tf.int32, name='global_step')
     z_in = tf.random_normal([batch_size, max_song_size, lstm_dim])
     z_size = tf.constant(max_song_size, dtype= tf.int32, shape=[batch_size])
     x_in = tf.placeholder(tf.float32, shape = [batch_size, max_song_size, song_feature])
@@ -130,14 +128,21 @@ def main():
 
     saver = tf.train.Saver()
     with tf.Session() as sess:
+        saved_loc = tf.train.latest_checkpoint('./saved_model/')
+        print(saved_loc)
         cnt_step = 0
-        saved_loc = tf.train.latest_checkpoint()
+        EPOCH_start = 0
+
         if saved_loc is None:
             sess.run(tf.global_variables_initializer())
+            print('No Saved Session')
         else:
             saver.restore(sess, saved_loc)
-        for epoch in range(EPOCH):
-            cnt_batch = 0
+            cnt_step = save_cnt.eval(sess)
+            EPOCH_start = (50 * cnt_step) // song_num['train']
+            song_var['train'] = (50 * cnt_step) % song_num['train']
+            print('Saved Session Found step: ', cnt_step)
+        for epoch in range(EPOCH_start, EPOCH):
             while True:
                 song_data = np.zeros([batch_size, max_song_size, song_feature], dtype=np.uint32)
                 song_getsoo = []
@@ -152,16 +157,17 @@ def main():
                                             dtype=tf.float32)'''
                 train_dict = {x_in: song_data, x_size: song_getsoo}
                 train_g_loss, train_d_loss, _, _, generated = sess.run([g_fm_loss, d_loss, trainG, trainD, gen], feed_dict=train_dict)
+
                 print('Generated', generated[0:10])
                 if cnt_step % print_batch == 0:
-                    print('epoch: ', epoch, ' batch_num: ', cnt_batch, ' cnt_step_num: ', cnt_step ,' G loss: ', train_g_loss,' D loss: ', train_d_loss)
-                cnt_batch += 1
+                    print('epoch: ', epoch, ' cnt_step_num: ', cnt_step, ' G loss: ', train_g_loss,' D loss: ', train_d_loss)
                 print(song_var['train'], ' ', song_num['train'])
+                cnt_step += 1
+                sess.run(tf.assign(save_cnt, cnt_step))
+                if cnt_step % save_batch == 1:
+                    saver.save(sess, './saved_model/model.ckpt', global_step = cnt_step)
                 if song_var['train'] + batch_size > song_num['train']:
                     break
-            if cnt_step % save_batch == 0:
-                saver.save(sess, './saved_model/model.ckpt', global_step = cnt_step)
-            cnt_step+=1
 
 
 if __name__ == '__main__':
