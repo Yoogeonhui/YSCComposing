@@ -10,10 +10,10 @@ lstm_dim = 350
 song_feature = 4
 start_num = 0
 batch_size = 50
-max_song_size = 100
+max_song_size = 150
 EPOCH = 200
 isAdam = True
-AdamLearningrate = {'G': 0.001, 'D': 0.0001, 'P': 0.001}
+AdamLearningrate = {'G': 0.0005, 'D': 0.0005, 'P': 0.01}
 GDLearningrate = {'G': 0.1, 'D': 0.1, 'P': 1e-7}
 print_batch = 5
 save_batch = 50
@@ -51,7 +51,7 @@ def get_batch(what='train'):
     return out_batch
 
 def get_batch_matrix(what = 'train'):
-    song_data = np.zeros([batch_size, max_song_size, song_feature], dtype=np.uint32)
+    song_data = np.zeros([batch_size, max_song_size, song_feature], dtype=np.float32)
     song_getsoo = []
     read_batch = get_batch(what)
     last_note = np.zeros([batch_size, 1, song_feature], dtype=np.uint32)
@@ -61,8 +61,10 @@ def get_batch_matrix(what = 'train'):
             tmp_max = newbat.shape[0]
         else:
             last_note[i, 0, :] = newbat[tmp_max, :]
+            last_note[i, 0, 0] -= newbat[tmp_max-1, 0]
         song_data[i, :tmp_max, :] = newbat[:tmp_max, :]
         song_getsoo.append(tmp_max)
+        song_data[i,1:tmp_max,0] = song_data[i,1:tmp_max,0] - song_data[i,0:tmp_max-1,0]
     return song_data, song_getsoo, last_note
 
 def linear(inp, out_dim, scope_name, reuse=False):
@@ -161,10 +163,14 @@ accuracy_res = (tf.reduce_mean(predict_real) + tf.reduce_mean(1-predict_gen))/2
 print('genvars: ', generator_variables)
 print('disvars: ', dis_variables)
 # Generator Feature Matching Loss
+'''
 front_sliced = tf.slice(gen_res,[0,0,0], [batch_size,max_song_size-1, song_feature])
 back_sliced = tf.slice(gen_res,[0,1,0], [batch_size, max_song_size-1, song_feature])
 back_diff= tf.squared_difference(front_sliced, back_sliced)
-g_fm_loss = tf.reduce_mean(tf.squared_difference(dis_calc_in_loss_real, dis_calc_in_loss_gen)) + tf.reduce_mean(1/tf.clip_by_value(back_diff, 1e-5, 1e+5))
+'''
+g_fm_loss = 15 * tf.reduce_mean(tf.squared_difference(dis_calc_in_loss_real, dis_calc_in_loss_gen))
+
+#+ (1e-5) * tf.reduce_mean(1/tf.clip_by_value(back_diff, 1e-5, 1e+5))
 g_loss = tf.reduce_mean(tf.log(tf.clip_by_value(1.0 - dis_res_gen, 1e-20, 1)))
 d_loss = tf.reduce_mean(-tf.log(tf.clip_by_value(dis_res_real, 1e-20, 1))-tf.log(tf.clip_by_value(1.0 - dis_res_gen, 1e-20, 1)))
 train_AdamG = tf.train.AdamOptimizer(AdamLearningrate['G']).minimize(g_fm_loss, var_list = generator_variables)
@@ -186,7 +192,6 @@ with tf.Session() as sess:
     print(saved_loc)
     cnt_step = 0
     EPOCH_start = 0
-
     if saved_loc is None:
         sess.run(tf.global_variables_initializer())
         print('No Saved Session')
@@ -197,23 +202,30 @@ with tf.Session() as sess:
         song_var['train'] = (batch_size * cnt_step) % song_num['train']
         print('Saved Session Found step: ', cnt_step)
 
-
     for epoch in range(EPOCH_start, 6):
         while True:
             song_data, song_getsoo, song_last_note = get_batch_matrix()
             song_data=np.concatenate((song_data,song_last_note), axis=1)
+
+
             #Pretraining
             pretrain_dict = {z_in: song_data[:,:-1,:], z_size: song_getsoo, x_in: song_data[:,1:,:], x_size: song_getsoo}
             if isAdam:
-                _, p_loss = sess.run([train_pre_A, pretrain_loss], feed_dict = pretrain_dict)
+                _, p_loss, generated_song = sess.run([train_pre_A, pretrain_loss, gen_res], feed_dict = pretrain_dict)
+                np.savetxt('generated_song.txt', generated_song[25], fmt="%d")
+                np.savetxt('origin_song.txt', song_data[25], fmt="%d")
+                if cnt_step % print_batch == 0:
+                    print('P: ', p_loss)
             else:
                 _, p_loss = sess.run([train_pre_G, pretrain_loss], feed_dict = pretrain_dict)
-            if cnt_step % print_batch == 0:
-                print('P: ', p_loss)
+
+
             if song_var['train'] + batch_size > song_num['train']:
+                saver.save(sess, './saved_model/model.ckpt', global_step = cnt_step)
                 break
-    print('Pretrain G completed')
+
     EPOCH_start = 6
+    print('Pretrain G completed')
     if isAdam:
         train_tens_G = train_AdamG
         train_tens_D = train_AdamD
@@ -221,7 +233,6 @@ with tf.Session() as sess:
         train_tens_G = trainG
         train_tens_D = trainD
 
-    cnt_step = song_num['train'] * 6 // batch_size
     for epoch in range(EPOCH_start, 7):
         while True:
             song_data, song_getsoo, _ = get_batch_matrix()
@@ -229,32 +240,38 @@ with tf.Session() as sess:
             accuracy, train_d_loss, _ = sess.run([accuracy_res, d_loss, train_tens_D], feed_dict = train_dict)
             print('acc', accuracy, 'd_loss', train_d_loss)
             if song_var['train'] + batch_size > song_num['train']:
+                saver.save(sess, './saved_model/model.ckpt', global_step = cnt_step)
                 break
+
     print('Pretrain D Completed')
-    cnt_step = song_num['train'] * 8 // batch_size
     for epoch in range(EPOCH_start, EPOCH):
         while True:
             song_data, song_getsoo, _ = get_batch_matrix()
 
-            train_dict = {z_in: np.random.uniform(low=0.0, high=1.0, size=(batch_size, max_song_size, song_feature)), z_size: song_getsoo, x_in: song_data, x_size: song_getsoo}
+            train_dict = {z_in: np.random.normal(size=(batch_size, max_song_size, song_feature)), z_size: song_getsoo, x_in: song_data, x_size: song_getsoo}
             # Freezing을 위한 Accuracy 구하기
             accuracy = sess.run(accuracy_res, feed_dict=train_dict)
             print('accuracy : ', accuracy)
-
+            '''
             if accuracy>=0.8:
-                train_g_loss, train_d_loss, _, generated, dis_res_see_gen, dis_res_see_real, back = sess.run(
-                    [g_fm_loss, d_loss, train_tens_G, gen_res, dis_res_gen, dis_res_real, back_diff],
-                    feed_dict=train_dict)
-                print(back)
             else:
                 train_g_loss, train_d_loss, _, _, generated, dis_res_see_gen, dis_res_see_real = sess.run([g_fm_loss, d_loss, train_tens_D, train_tens_G, gen_res, dis_res_gen, dis_res_real],
-                                                                                                          feed_dict=train_dict)
+            '                                                                                        feed_dict=train_dict)
+            '''
+            train_g_loss, train_d_loss = sess.run(
+                [g_fm_loss, d_loss],
+                feed_dict=train_dict)
+            if train_g_loss<=0.7*train_d_loss:
+                _ = sess.run(train_tens_D, feed_dict = train_dict)
+            elif train_d_loss<=0.7*train_g_loss:
+                _ = sess.run(train_tens_G, feed_dict= train_dict)
+            else:
+                _, _ = sess.run([train_tens_D, train_tens_G], feed_dict= train_dict)
+            generated = sess.run(gen_res, feed_dict = train_dict)
             generated = generated.astype(int)
             print(generated.shape)
             np.savetxt('generated_song.txt', generated[25], fmt="%d")
             print('Generated', generated[25][-1])
-            if generated[25][-1][0] == 0:
-                print(generated)
             print('epoch: ', epoch, ' cnt_step_num: ', cnt_step, ' G loss: ', train_g_loss,' D loss: ', train_d_loss)
             print(song_var['train'], ' ', song_num['train'])
             cnt_step += 1
