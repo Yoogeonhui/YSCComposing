@@ -1,18 +1,10 @@
 # YSC 작곡 인공지능
 
-## 정말 엄청난 도움이 된 Repository
+## 큰 도움이 된 선행연구의 git
 
-https://github.com/olofmogren/c-rnn-gan
-
-
-## 기타 참고 논문
-
-- Jürgen Schmidhuber and Sepp Hochreiter. Long short-term memory. Neural computation, 7(8):
-  1735–1780, 1997. => LSTM
-- improved-techniques-for-training-gans => Feature Matching
 - C-RNN-GAN: Continuous recurrent neural networks with adversarial training.
+- https://github.com/olofmogren/c-rnn-gan
 
-## 먼 미래에 이 프로젝트는
 
-예상되는 결과가 그닥 기대에 차있지 않기 때문에 전처리 과정을 one-hot방식으로 바꾸거나 기타 등등의
-작업을 거쳐 더 나은 방식으로 고3이 지난 뒤 제작할 방침입니다.
+## 프로젝트 개선 방안
+- Magenta에서 LSTM-NADE를 활용한 인공지능을 보았지만 RBM쪽 신경망에 대한 수식적 이해가 부족하여 BachBot논문을 읽어보고 할 수 있다면 다시 시도할 생각입니다.
